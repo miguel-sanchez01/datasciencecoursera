@@ -1,0 +1,158 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Miguel Ángel Sánchez"
+date: "11/29/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: [link](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+
+## Data Loading and Processing
+
+### Packages
+
+```{r}
+library(caret)
+library(corrplot)
+library(DataExplorer)
+library(dplyr)
+library(gbm)
+library(ggplot2)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+```
+
+### Getting, Cleaning and Exploring the data
+
+```{r}
+url_train <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+url_test <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+train <- read.csv(url_train, na.strings = c(NA, "NA", ""))
+test <- read.csv(url_test, na.strings = c(NA, "NA", ""))
+dim(train)
+dim(test)
+str(train)
+```
+
+As shown below there are $19622$ observations and $160$ variables in the Train dataset
+
+### Cleaning the input data
+
+We remove the variables that contains missing values. Note along the cleaning process we display the dimension of the reduced dataset
+
+```{r}
+x = apply(train, 2, function(x) round((sum(is.na(x)) / length(x)) * 100, 2)) %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column("names")
+names(x) <- c("names", "na_s")
+x %>% arrange(na_s) %>% filter(na_s > 0)
+```
+
+There are many variables with lost data so they are removed from the original data.
+
+```{r}
+names_nas <- filter(x, na_s > 0) %>% pull(names)
+train <- select(train, -all_of(names_nas))
+test <- select(test, -all_of(names_nas))
+```
+
+We now remove the first seven variables as they have little impact on the outcome classe
+
+```{r}
+# remove identification only variables (columns 1 to 5)
+train <- train[, -c(1:5)]
+test <- test[, -c(1:5)]
+```
+
+### Plot missing values 
+
+```{r}
+plot_missing(train)
+```
+
+Removing the variables with values near zero, that means that they have not so much meaning in the predictions.
+
+```{r}
+nzv <- nearZeroVar(train, saveMetrics = TRUE)
+train <- train[, nzv$nzv == FALSE] %>% mutate(classe = factor(classe))
+
+test <- test[, nzv$nzv==FALSE]
+```
+
+### Correlation Analysis
+
+```{r}
+corMatrix <- cor(train[, -54])
+corrplot(corMatrix, order = "FPC", method = "color", type = "lower", 
+         tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+```
+
+we eliminate the high correlations
+
+```{r}
+descrCor <- cor(train[, -54])
+highlyCorDescr <- findCorrelation(descrCor, cutoff = .75)
+train <- train[,-highlyCorDescr]
+```
+
+### Create cross validation set
+
+The training set is divided in two parts, one for training and the other for cross validation.
+
+```{r}
+set.seed(2020)
+
+inTrain = createDataPartition(train$classe, p = 3/4, list=FALSE)
+training = train[inTrain, ]
+crossValidation = train[-inTrain, ]
+```
+
+
+
+### Train model
+
+Train model with random forest due to its highly accuracy rate.
+
+```{r}
+set.seed(2020)
+modFit <- train(
+  classe ~ ., method="rf", data = train, 
+  trControl = trainControl(method="cv", number=3, verboseIter=FALSE)
+)
+summary(modFit)
+```
+
+### Accuracy on training set and cross validation set
+
+#### Training set:
+
+```{r}
+trainingPred <- predict(modFit, training)
+confusionMatrix(trainingPred, training$classe)
+```
+
+#### Cross validation set
+
+```{r}
+cvPred <- predict(modFit, crossValidation)
+confusionMatrix(cvPred, crossValidation$classe)
+```
+
+### RESULTS
+
+Predictions on the real testing set
+
+```{r}
+testingPred <- predict(modFit, test)
+testingPred
+```
+
+
